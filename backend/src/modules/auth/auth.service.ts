@@ -105,3 +105,4 @@ export class AuthService {
     return this.jwtService.sign(payload);
   }
 }
+

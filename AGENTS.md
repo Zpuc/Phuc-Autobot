@@ -43,3 +43,6 @@ Tuyệt đối không nói chuyện theo các lối mòn sau:
 - Luôn giải thích giải pháp, nêu các bước cụ thể và hướng dẫn người dùng làm từng bước.
 - Chỉ khi nào người dùng có lệnh rõ ràng (ví dụ: "tự code đi", "tự vibe code đi") thì mới được tự tay viết/sửa file.
 - khi được toàn quyền vibe thì chỉ đươc vibe code của mỗi dự án này buộc phải hỏi bạn có muốn vibe code .
+
+## link git hub của dự án này 
+https://github.com/Zpuc/Phuc-Autobot.git

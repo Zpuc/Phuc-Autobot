@@ -1,0 +1,183 @@
+================================================================================
+KẾ HOẠCH & TÀI LIỆU KỸ THUẬT: HỆ THỐNG QUẢN LÝ CỬA HÀNG MÔ HÌNH GUNDAM AUTOBOT
+================================================================================
+
+1. TỔNG QUAN HỆ THỐNG
+--------------------------------------------------------------------------------
+- Tên dự án: Autobot Gundam Store (Hệ thống web báo giá & quản lý cửa hàng mô hình Gundam)
+- Định vị: Web giới thiệu sản phẩm, tra cứu, gửi yêu cầu báo giá/đặt hàng kèm phân hệ quản trị (Admin). Chưa tích hợp cổng thanh toán trực tuyến ở pha 1 (sử dụng COD / Chuyển khoản ngân hàng, xác nhận qua Zalo/Điện thoại).
+- Hai nhóm tác nhân chính:
+  + Khách hàng (Public): Xem danh mục, lọc theo tiêu chuẩn Gundam, xem giá/yêu cầu báo giá, giỏ hàng, đặt hàng, tra cứu tình trạng đơn qua mã đơn.
+  + Quản trị & Nhân viên (Admin/Staff): Quản lý sản phẩm, tồn kho, lịch sử giá, đơn hàng, xuất báo giá (PDF/ảnh), báo cáo doanh thu & lãi gộp.
+
+- Tech Stack:
+  + Backend: NestJS (TypeScript), PostgreSQL, Prisma ORM, JWT (Access & Refresh Token), Swagger (@nestjs/swagger), class-validator, @nestjs/throttler.
+  + Frontend: React (Vite + TypeScript), Ant Design (antd) + @ant-design/icons, React Router, TanStack Query, React Hook Form + Zod, Zustand.
+  + Hạ tầng & Triển khai: Docker Compose (PostgreSQL, Backend, Frontend), Git Flow.
+
+
+2. NGHIỆP VỤ ĐẶC THÙ CỬA HÀNG GUNDAM
+--------------------------------------------------------------------------------
+1. Thuộc tính sản phẩm chuyên biệt:
+   - Phân khúc (Grade): HG (High Grade), RG (Real Grade), MG (Master Grade), PG (Perfect Grade), SD, Mega Size.
+   - Tỉ lệ (Scale): 1/144, 1/100, 1/60, Non-scale.
+   - Dòng phim / Vũ trụ (Series): Universal Century (UC), SEED, 00, Iron-Blooded Orphans, Witch from Mercury...
+   - Hãng sản xuất (Brand): Bandai, Daban, Motor Nuclear, In Era+, SNAA...
+   - Tình trạng hộp/kit: Hàng mới (MISB), hộp móp thanh lý, đã ráp (2nd).
+   - Trạng thái hàng hóa: Hàng có sẵn trong kho hoặc Hàng đặt trước (Pre-order).
+
+2. Báo giá & Lịch sử biến động giá:
+   - Giá mô hình phụ thuộc đợt nhập khẩu và tỉ giá JPY/CNY.
+   - Bảng `product_prices` lưu vết từng mốc giá và giá vốn (cost_price). Giá hiện tại luôn là bản ghi mới nhất.
+   - Hỗ trợ trạng thái "Liên hệ báo giá" cho các mã hàng hiếm/order.
+   - Tạo báo giá riêng (Quotation) gửi khách, có hạn hiệu lực và có thể xuất ra file PDF/ảnh.
+
+3. Đặt hàng & Xử lý tồn kho:
+   - Xử lý đặt hàng BẮT BUỘC dùng Database Transaction: Tạo Order + OrderItems đồng thời kiểm tra và trừ tồn kho ngay lập tức.
+   - Vòng đời trạng thái đơn hàng:
+     pending (Chờ xác nhận) -> confirmed (Đã xác nhận) -> packing (Đang đóng gói) 
+     -> shipping (Đang giao hàng) -> completed (Hoàn thành)
+     (Nhánh phụ: cancelled - Đã hủy, hoàn lại tồn kho; returned - Trả hàng).
+   - Vận chuyển: Tính phí nội thành theo khu vực (shipping_zones), ngoại thành gửi GHN/GHTK và nhập mã vận đơn thủ công.
+
+4. Báo cáo & Thống kê:
+   - Doanh thu theo mốc thời gian (ngày, tháng).
+   - Lợi nhuận gộp (Doanh thu - Giá vốn theo thời điểm bán).
+   - Tồn kho cảnh báo sắp hết (quantity <= min_stock), danh sách hàng bán chạy.
+
+
+3. THIẾT KẾ CƠ SỞ DỮ LIỆU POSTGRESQL (CHUẨN HÓA)
+--------------------------------------------------------------------------------
+* Lưu ý kỹ thuật:
+  - Kiểu tiền tệ: numeric(12, 0) (VND không có số lẻ).
+  - Khóa chính: UUID hoặc BigInt tăng dần (gợi ý UUID để bảo mật và mở rộng).
+  - Soft delete: Cột `deleted_at` ở bảng `products` để giữ toàn vẹn dữ liệu đơn cũ.
+  - Index quan trọng: products(slug), orders(code), products(category_id, status).
+
+* Chi tiết các bảng:
+  1. users: id, name, email (unique), phone, password_hash, role (ADMIN, STAFF, CUSTOMER), created_at, updated_at
+  2. categories: id, name, slug (unique), parent_id (nullable, tự trỏ categories.id), created_at
+  3. brands: id, name, slug (unique), logo_url, created_at
+  4. products:
+     - id, name, slug (unique, index)
+     - sku (unique), category_id (FK), brand_id (FK)
+     - grade (VARCHAR/ENUM: HG, RG, MG, PG, SD, MEGA_SIZE...)
+     - scale (VARCHAR: 1/144, 1/100, 1/60...)
+     - series (VARCHAR: UC, SEED, 00, WFM...)
+     - condition (VARCHAR: NEW_SEAL, DENTED_BOX, ASSEMBLED)
+     - description (TEXT)
+     - status (ACTIVE, INACTIVE, OUT_OF_STOCK)
+     - is_preorder (BOOLEAN, default: false)
+     - deleted_at (TIMESTAMPTZ, nullable)
+     - created_at, updated_at
+  5. product_images: id, product_id (FK), url, sort_order (INT, default: 0), is_thumbnail (BOOLEAN)
+  6. product_prices: id, product_id (FK), price (NUMERIC(12,0)), cost_price (NUMERIC(12,0)), effective_from (TIMESTAMPTZ), note (VARCHAR)
+  7. inventory: product_id (PK, FK -> products.id), quantity (INT), min_stock (INT, default: 2), updated_at
+  8. inventory_logs: id, product_id (FK), change (INT), reason (IMPORT, SALE, RETURN, ADJUST), ref_id (VARCHAR), created_at
+  9. suppliers: id, name, contact_person, phone, email, address
+  10. purchase_orders: id, code (unique), supplier_id (FK), status, total_amount (NUMERIC(12,0)), created_at
+  11. purchase_order_items: id, purchase_order_id (FK), product_id (FK), quantity, unit_cost (NUMERIC(12,0))
+  12. addresses: id, user_id (FK, nullable), receiver_name, phone, province, district, ward, detail_address, is_default
+  13. shipping_zones: id, name, districts (JSONB hoặc text), fee (NUMERIC(12,0)), is_local (BOOLEAN)
+  14. orders:
+      - id, code (unique, index, ví dụ: AG-261106-001)
+      - user_id (FK, nullable nếu khách vãng lai)
+      - customer_name, customer_phone, customer_email
+      - shipping_address (TEXT)
+      - shipping_fee (NUMERIC(12,0))
+      - subtotal (NUMERIC(12,0)), total (NUMERIC(12,0))
+      - status (PENDING, CONFIRMED, PACKING, SHIPPING, COMPLETED, CANCELLED, RETURNED)
+      - payment_method (COD, BANK_TRANSFER)
+      - tracking_code (VARCHAR, nullable)
+      - note (TEXT, nullable)
+      - created_at, updated_at
+  15. order_items: id, order_id (FK), product_id (FK), product_name, quantity, unit_price (NUMERIC(12,0)), unit_cost (NUMERIC(12,0))
+  16. order_status_history: id, order_id (FK), status, changed_by (FK -> users.id, nullable), note, changed_at
+  17. quotations: id, code (unique), customer_name, customer_phone, valid_until (TIMESTAMPTZ), total_amount (NUMERIC(12,0)), status, note, created_at
+  18. quotation_items: id, quotation_id (FK), product_id (FK), quantity, unit_price (NUMERIC(12,0))
+
+
+4. CẤU TRÚC DỰ ÁN (MONOREPO GỒM BACKEND & FRONTEND)
+--------------------------------------------------------------------------------
+autobot-gundam/
+├── backend/                  # NestJS API
+│   ├── src/
+│   │   ├── common/           # Guards, Decorators, Filters, Interceptors, DTOs
+│   │   ├── config/           # Envs, Database configuration
+│   │   ├── modules/
+│   │   │   ├── auth/         # Login, Register, JWT, RolesGuard
+│   │   │   ├── users/        # Quản lý tài khoản, khách hàng
+│   │   │   ├── products/     # CRUD Gundam, lọc theo Grade/Scale/Series
+│   │   │   ├── categories/   # Danh mục mô hình
+│   │   │   ├── brands/       # Hãng sản xuất (Bandai, Daban...)
+│   │   │   ├── prices/       # Lịch sử giá & cấu hình giá
+│   │   │   ├── inventory/    # Tồn kho & nhật ký xuất nhập
+│   │   │   ├── orders/       # Luồng đặt hàng, xử lý trạng thái
+│   │   │   ├── quotations/   # Tạo báo giá, xuất PDF
+│   │   │   ├── shipping/     # Khu vực giao hàng & tính phí
+│   │   │   ├── uploads/      # Upload ảnh sản phẩm (Cloudinary / Local)
+│   │   │   └── reports/      # Thống kê doanh thu, tồn kho, lợi nhuận
+│   │   ├── app.module.ts
+│   │   └── main.ts
+│   ├── prisma/               # schema.prisma, migrations, seed.ts
+│   ├── .env.example
+│   └── package.json
+│
+├── frontend/                 # React (Vite + TS + Ant Design)
+│   ├── src/
+│   │   ├── api/              # Axios instance, services gọi API
+│   │   ├── components/       # Antd custom components, ProductCard, FilterDrawer...
+│   │   ├── layouts/
+│   │   │   ├── PublicLayout/ # Header khách, Menu Gundam, Giỏ hàng, Footer
+│   │   │   └── AdminLayout/  # Sider quản trị, Topbar, Breadcrumb Ant Design
+│   │   ├── pages/
+│   │   │   ├── public/       # Home, ProductList (Filter), ProductDetail, Cart, Checkout, TrackOrder
+│   │   │   └── admin/        # Dashboard, ProductManage, OrderManage, InventoryManage, QuotationManage, Reports
+│   │   ├── routes/           # React Router v6 cấu hình ProtectedRoute
+│   │   ├── store/            # Zustand lưu AuthState và CartState
+│   │   └── utils/            # Format tiền VND, ngày tháng, badge trạng thái
+│   ├── .env.example
+│   └── package.json
+│
+├── docker-compose.yml        # Chạy PostgreSQL, pgAdmin (tùy chọn)
+├── .gitignore
+└── ke-hoach-du-an.txt
+
+
+5. QUY TRÌNH GIT FLOW & CHECKLIST TRIỂN KHAI
+--------------------------------------------------------------------------------
+- Quy tắc Git:
+  + main: Phiên bản chạy thật (production). Không commit trực tiếp.
+  + develop: Nhánh trung tâm nhận code sau khi test xong.
+  + feature/*: Nhánh phát triển từng tính năng riêng biệt.
+  + Quy tắc commit: feat(be): ..., feat(fe): ..., fix(be): ..., chore(db): ...
+
+- Các giai đoạn và nhánh tương ứng:
+  [ ] Pha 1: feature/setup-docker-compose
+      + Khởi tạo git, .gitignore, docker-compose.yml (PostgreSQL 16).
+      + Khởi tạo cấu trúc thư mục backend/ (NestJS) và frontend/ (React Vite + Ant Design).
+  [ ] Pha 2: feature/be-auth-jwt & feature/fe-login
+      + Auth module: Đăng ký, Đăng nhập, JWT Refresh Token, RolesGuard (ADMIN, STAFF, CUSTOMER).
+      + Form đăng nhập/đăng ký phía Frontend (Ant Design Form).
+  [ ] Pha 3: feature/be-product-crud & feature/fe-admin-products
+      + Database schema cho categories, brands, products, product_images, product_prices, inventory.
+      + API CRUD sản phẩm, bộ lọc phân khúc (Grade, Scale, Series), upload ảnh.
+      + Màn hình quản lý sản phẩm Admin (Table, Modal, Image Upload).
+  [ ] Pha 4: feature/fe-product-list & feature/fe-product-detail
+      + Giao diện khách: Banner, danh sách Gundam, thanh lọc đa tiêu chí (phân khúc, giá, series, hãng).
+      + Trang chi tiết sản phẩm: Thư viện ảnh, thông số kit, nút "Thêm vào giỏ" hoặc "Yêu cầu báo giá".
+  [ ] Pha 5: feature/be-order-flow & feature/fe-cart-checkout
+      + Giỏ hàng (Zustand + LocalStorage).
+      + API Đặt hàng có Transaction trừ tồn kho và tính phí ship theo khu vực.
+      + Màn hình thanh toán COD / Chuyển khoản, trang Tra cứu đơn hàng theo mã đơn.
+  [ ] Pha 6: feature/be-order-admin & feature/fe-admin-orders
+      + Quản lý đơn hàng phía Admin: Đổi trạng thái (pending -> confirmed -> packing -> shipping -> completed).
+      + Cập nhật mã vận đơn, hủy đơn có hoàn trả tồn kho.
+  [ ] Pha 7: feature/be-quotation-pdf & feature/be-reports
+      + Phân hệ xuất báo giá PDF / ảnh.
+      + Trang Dashboard Admin thống kê doanh thu, tồn kho và lãi gộp.
+  [ ] Pha 8: release/1.0.0
+      + Seed data (20-30 mẫu Gundam đủ các dòng HG/RG/MG/PG).
+      + Kiểm thử toàn bộ luồng e2e, đóng gói bản phát hành đầu tiên.
+================================================================================
+

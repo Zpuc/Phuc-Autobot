@@ -29,3 +29,9 @@ Thumbs.db
 uploads/
 */uploads/
 
+# Rules, agents & text notes (Tuyệt đối không đẩy lên Git)
+AGENTS.md
+*/AGENTS.md
+user-rules.txt
+*.txt
+text/
